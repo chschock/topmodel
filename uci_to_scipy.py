@@ -6,7 +6,7 @@ import scipy
 import numpy as np
 
 if len(sys.argv) < 2:
-    print "usage: input_matrix output_matrix"
+    print("usage: input_matrix output_matrix")
     sys.exit()
 
 input_matrix = sys.argv[1]
