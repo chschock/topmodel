@@ -65,7 +65,7 @@ def fastQuadSolveExpGrad(y, x, eps, initialStepsize, recoveryLog, anchorsTimesAn
 
     # Multiply the target vector y and the anchors matrix X by X'
     #  (XX' could be passed in as a parameter)
-    if anchorsTimesAnchors==None:
+    if anchorsTimesAnchors is None:
         print("XX' was not passed in")
         anchorsTimesAnchors = dot(x, x.transpose())
     targetTimesAnchors = dot(y, x.transpose())
@@ -121,7 +121,7 @@ def fastQuadSolveExpGrad(y, x, eps, initialStepsize, recoveryLog, anchorsTimesAn
 def quadSolveExpGrad(y, x, eps, alpha=None, XX=None): 
     c1 = 10**(-4)
     c2 = 0.75
-    if XX == None:
+    if XX is None:
         print('making XXT')
         XX = dot(x, x.transpose())
 
@@ -133,7 +133,7 @@ def quadSolveExpGrad(y, x, eps, alpha=None, XX=None):
     x_copy = copy(x)
 
     (K,n) = x.shape
-    if alpha == None:
+    if alpha is None:
         alpha = ones(K)/K
 
     old_alpha = copy(alpha)
@@ -235,7 +235,7 @@ def KLSolveExpGrad(y,x,eps, alpha=None):
     x += 10**(-9)
     x /= x.sum(axis=1)[:,newaxis]
 
-    if alpha == None:
+    if alpha is None:
         alpha = ones(K)/K
 
     old_alpha = copy(alpha)
