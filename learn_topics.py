@@ -16,27 +16,28 @@ class Params:
         self.checkpoint_prefix=None
         self.seed = int(time.time())
 
-        for l in file(filename):
-            if l == "\n" or l[0] == "#":
-                continue
-            l = l.strip()
-            l = l.split('=')
-            if l[0] == "log_prefix":
-                self.log_prefix = l[1]
-            elif l[0] == "max_threads":
-                self.max_threads = int(l[1])
-            elif l[0] == "eps":
-                self.eps = float(l[1])
-            elif l[0] == "checkpoint_prefix":
-                self.checkpoint_prefix = l[1]
-            elif l[0] == "new_dim":
-                self.new_dim = int(l[1])
-            elif l[0] == "seed":
-                self.seed = int(l[1])
-            elif l[0] == "anchor_thresh":
-                self.anchor_thresh = int(l[1])
-            elif l[0] == "top_words":
-                self.top_words = int(l[1])
+        with open(filename, 'rt') as f:
+            for l in f:
+                if l == "\n" or l[0] == "#":
+                    continue
+                l = l.strip()
+                l = l.split('=')
+                if l[0] == "log_prefix":
+                    self.log_prefix = l[1]
+                elif l[0] == "max_threads":
+                    self.max_threads = int(l[1])
+                elif l[0] == "eps":
+                    self.eps = float(l[1])
+                elif l[0] == "checkpoint_prefix":
+                    self.checkpoint_prefix = l[1]
+                elif l[0] == "new_dim":
+                    self.new_dim = int(l[1])
+                elif l[0] == "seed":
+                    self.seed = int(l[1])
+                elif l[0] == "anchor_thresh":
+                    self.anchor_thresh = int(l[1])
+                elif l[0] == "top_words":
+                    self.top_words = int(l[1])
 
 #parse input args
 if len(sys.argv) > 6:
@@ -68,7 +69,7 @@ print(len(candidate_anchors), "candidates")
 #forms Q matrix from document-word matrix
 Q = generate_Q_matrix(M)
 
-vocab = file(vocab_file).read().strip().split()
+vocab = open(vocab_file).read().strip().split()
 
 #check that Q sum is 1 or close to it
 print("Q sum is", Q.sum())
@@ -90,13 +91,13 @@ np.savetxt(outfile+".A", A)
 np.savetxt(outfile+".topic_likelihoods", topic_likelihoods)
 
 #display
-f = file(outfile+".topwords", 'w')
-for k in range(K):
-    topwords = np.argsort(A[:, k])[-params.top_words:][::-1]
-    print(vocab[anchors[k]], ':', end=' ')
-    print(vocab[anchors[k]], ':', end=' ', file=f)
-    for w in topwords:
-        print(vocab[w], end=' ')
-        print(vocab[w], end=' ', file=f)
-    print("")
-    print("", file=f)
+with open(outfile+".topwords", 'w') as f:
+    for k in range(K):
+        topwords = np.argsort(A[:, k])[-params.top_words:][::-1]
+        print(vocab[anchors[k]], ':', end=' ')
+        print(vocab[anchors[k]], ':', end=' ', file=f)
+        for w in topwords:
+            print(vocab[w], end=' ')
+            print(vocab[w], end=' ', file=f)
+        print("")
+        print("", file=f)

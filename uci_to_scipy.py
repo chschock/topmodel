@@ -12,16 +12,16 @@ if len(sys.argv) < 2:
 input_matrix = sys.argv[1]
 output_matrix_name = sys.argv[2]
 
-infile = file(input_matrix)
-num_docs = int(infile.readline())
-num_words = int(infile.readline())
-nnz = int(infile.readline())
+with open(input_matrix, 'rt') as infile:
+    num_docs = int(infile.readline())
+    num_words = int(infile.readline())
+    nnz = int(infile.readline())
 
-output_matrix = scipy.sparse.lil_matrix((num_words, num_docs))
+    output_matrix = scipy.sparse.lil_matrix((num_words, num_docs))
 
-for l in infile:
-    d, w, v = [int(x) for x in l.split()]
-    output_matrix[w-1, d-1] = v
+    for l in infile:
+        d, w, v = [int(x) for x in l.split()]
+        output_matrix[w-1, d-1] = v
 
 scipy.io.savemat(output_matrix_name, {'M' : output_matrix}, oned_as='column')
 

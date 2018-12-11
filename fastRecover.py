@@ -417,9 +417,9 @@ class myIterator:
 #comment out the recovery log if you don't want it
 def nonNegativeRecover(Q, anchors, outfile_name, divergence, max_threads, initial_stepsize=1, epsilon=10**(-7)):
 
-    topic_likelihoodLog = file(outfile_name+".topic_likelihoods", 'w')
-    word_likelihoodLog = file(outfile_name+".word_likelihoods", 'w')
-    alphaLog = file(outfile_name+".alpha", 'w')
+    topic_likelihoodLog = open(outfile_name+".topic_likelihoods", 'w')
+    word_likelihoodLog = open(outfile_name+".word_likelihoods", 'w')
+    alphaLog = open(outfile_name+".alpha", 'w')
 
     V = Q.shape[0]
     K = len(anchors)
