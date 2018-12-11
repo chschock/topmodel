@@ -1,12 +1,11 @@
-
-
 import numpy as np
 import sys
 import os
 import errno
 from numpy.random import RandomState
 import random_projection as rp
-import gram_schmidt_stable as gs 
+import gram_schmidt_stable as gs
+
 
 def findAnchors(Q, K, params, candidates):
     # Random number generator for generating dimension reduction
@@ -17,7 +16,7 @@ def findAnchors(Q, K, params, candidates):
     # row normalize Q
     row_sums = Q.sum(1)
     for i in range(len(Q[:, 0])):
-        Q[i, :] = Q[i, :]/float(row_sums[i])    
+        Q[i, :] = Q[i, :] / float(row_sums[i])
 
     # Reduced dimension random projection method for recovering anchor words
     Q_red = rp.Random_Projection(Q.T, new_dim, prng_W)
@@ -26,8 +25,6 @@ def findAnchors(Q, K, params, candidates):
 
     # restore the original Q
     for i in range(len(Q[:, 0])):
-        Q[i, :] = Q[i, :]*float(row_sums[i])
+        Q[i, :] = Q[i, :] * float(row_sums[i])
 
     return anchor_indices
-
-

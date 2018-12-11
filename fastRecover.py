@@ -2,40 +2,47 @@ import time
 import sys
 from numpy import *
 import multiprocessing
-#from gurobipy import *
+
+# from gurobipy import *
+
 
 def do_recovery(Q, anchors, loss, params):
     if loss == "originalRecover":
         return (Recover(Q, anchors), None)
     elif loss == "KL" or "L2" in loss:
-        A, colsums = nonNegativeRecover(Q, anchors, params.log_prefix, loss, params.max_threads, epsilon=params.eps)
+        A, colsums = nonNegativeRecover(
+            Q, anchors, params.log_prefix, loss, params.max_threads, epsilon=params.eps
+        )
         hp = colsums
-        
+
         return A, hp
     else:
         print("unrecognized loss function", loss, ". Options are KL,L2 or originalRecover")
-        
+
         return None
+
 
 def logsum_exp(y):
     m = y.max()
     return m + log((exp(y - m)).sum())
 
+
 def KL_helper(arg):
-    p,q = arg
+    p, q = arg
     if p == 0:
         return 0
-    return p*(log(p)-log(q))
+    return p * (log(p) - log(q))
+
 
 def entropy(p):
     e = 0
     for i in range(len(p)):
         if p[i] > 0:
-            e += p[i]*log(p[i])
+            e += p[i] * log(p[i])
     return -e
-        
 
-def KL(p,log_p,q):
+
+def KL(p, log_p, q):
     N = p.size
     ret = 0
     log_diff = log_p - log(q)
@@ -58,10 +65,10 @@ def KL(p,log_p,q):
     return ret
 
 
-#this method does not use a line search and as such may be faster
-#but it needs an initialization of the stepsize
-def fastQuadSolveExpGrad(y, x, eps, initialStepsize, recoveryLog, anchorsTimesAnchors=None): 
-    (K,n) = x.shape
+# this method does not use a line search and as such may be faster
+# but it needs an initialization of the stepsize
+def fastQuadSolveExpGrad(y, x, eps, initialStepsize, recoveryLog, anchorsTimesAnchors=None):
+    (K, n) = x.shape
 
     # Multiply the target vector y and the anchors matrix X by X'
     #  (XX' could be passed in as a parameter)
@@ -70,20 +77,20 @@ def fastQuadSolveExpGrad(y, x, eps, initialStepsize, recoveryLog, anchorsTimesAn
         anchorsTimesAnchors = dot(x, x.transpose())
     targetTimesAnchors = dot(y, x.transpose())
 
-    alpha = ones(K)/K
+    alpha = ones(K) / K
     log_alpha = log(alpha)
 
-    iteration = 1 
-    eta = 0.1 
+    iteration = 1
+    eta = 0.1
 
     # To get the gradient, do one K-dimensional matrix-vector product
-    proj = -2*(targetTimesAnchors - dot(alpha,anchorsTimesAnchors))
-    new_obj = linalg.norm(proj,2)
-    gap = float('inf')
+    proj = -2 * (targetTimesAnchors - dot(alpha, anchorsTimesAnchors))
+    new_obj = linalg.norm(proj, 2)
+    gap = float("inf")
 
     while 1:
-    # Set the learning rate
-        eta = initialStepsize/(iteration**0.5)
+        # Set the learning rate
+        eta = initialStepsize / (iteration ** 0.5)
         iteration += 1
 
         # Save previous values for convergence tests
@@ -91,19 +98,19 @@ def fastQuadSolveExpGrad(y, x, eps, initialStepsize, recoveryLog, anchorsTimesAn
         old_alpha = copy(alpha)
 
         # Add the gradient and renormalize in logspace, then exponentiate
-        log_alpha += -eta*proj
+        log_alpha += -eta * proj
         log_alpha -= logsum_exp(log_alpha)
 
         alpha = exp(log_alpha)
-        
-        # Recalculate the gradient and check for convergence
-        proj = -2*(targetTimesAnchors - dot(alpha,anchorsTimesAnchors))
-        new_obj = linalg.norm(proj,2)
 
-        # Stop if the L2 norm of the change in alpha OR 
+        # Recalculate the gradient and check for convergence
+        proj = -2 * (targetTimesAnchors - dot(alpha, anchorsTimesAnchors))
+        new_obj = linalg.norm(proj, 2)
+
+        # Stop if the L2 norm of the change in alpha OR
         #  the % change in L2 norm of the gradient are below tolerance.
-        #convergence = min(linalg.norm(alpha-old_alpha, 2), abs(new_obj-old_obj)/old_obj)
-        
+        # convergence = min(linalg.norm(alpha-old_alpha, 2), abs(new_obj-old_obj)/old_obj)
+
         # stop if the primal-dual gap < eps
         lam = copy(proj)
         lam -= lam.min()
@@ -118,11 +125,12 @@ def fastQuadSolveExpGrad(y, x, eps, initialStepsize, recoveryLog, anchorsTimesAn
 
     return alpha, iteration, new_obj, None, gap
 
-def quadSolveExpGrad(y, x, eps, alpha=None, XX=None): 
-    c1 = 10**(-4)
+
+def quadSolveExpGrad(y, x, eps, alpha=None, XX=None):
+    c1 = 10 ** (-4)
     c2 = 0.75
     if XX is None:
-        print('making XXT')
+        print("making XXT")
         XX = dot(x, x.transpose())
 
     XY = dot(x, y)
@@ -132,28 +140,28 @@ def quadSolveExpGrad(y, x, eps, alpha=None, XX=None):
     y_copy = copy(y)
     x_copy = copy(x)
 
-    (K,n) = x.shape
+    (K, n) = x.shape
     if alpha is None:
-        alpha = ones(K)/K
+        alpha = ones(K) / K
 
     old_alpha = copy(alpha)
     log_alpha = log(alpha)
     old_log_alpha = copy(log_alpha)
 
-    it = 1 
+    it = 1
     aXX = dot(alpha, XX)
     aXY = float(dot(alpha, XY))
     aXXa = float(dot(aXX, alpha.transpose()))
 
-    grad = 2*(aXX-XY)
-    new_obj = aXXa - 2*aXY + YY
+    grad = 2 * (aXX - XY)
+    new_obj = aXXa - 2 * aXY + YY
 
     old_grad = copy(grad)
 
     stepsize = 1
     repeat = False
     decreased = False
-    gap = float('inf')
+    gap = float("inf")
     while 1:
         eta = stepsize
         old_obj = new_obj
@@ -165,13 +173,13 @@ def quadSolveExpGrad(y, x, eps, alpha=None, XX=None):
             break
 
         it += 1
-        #if it % 1000 == 0:
+        # if it % 1000 == 0:
         #    print "\titer", it, new_obj, gap, stepsize
-        #update
-        log_alpha -= eta*grad
-        #normalize
+        # update
+        log_alpha -= eta * grad
+        # normalize
         log_alpha -= logsum_exp(log_alpha)
-        #compute new objective
+        # compute new objective
         alpha = exp(log_alpha)
 
         aXX = dot(alpha, XX)
@@ -179,22 +187,26 @@ def quadSolveExpGrad(y, x, eps, alpha=None, XX=None):
         aXXa = float(dot(aXX, alpha.transpose()))
 
         old_obj = new_obj
-        new_obj = aXXa - 2*aXY + YY
-        if not new_obj <= old_obj + c1*stepsize*dot(grad, alpha - old_alpha): #sufficient decrease
-            stepsize /= 2.0 #reduce stepsize
-            alpha = old_alpha 
+        new_obj = aXXa - 2 * aXY + YY
+        if not new_obj <= old_obj + c1 * stepsize * dot(
+            grad, alpha - old_alpha
+        ):  # sufficient decrease
+            stepsize /= 2.0  # reduce stepsize
+            alpha = old_alpha
             log_alpha = old_log_alpha
             new_obj = old_obj
             repeat = True
             decreased = True
             continue
 
-        #compute the new gradient
+        # compute the new gradient
         old_grad = copy(grad)
-        grad = 2*(aXX-XY)
-        
-        if (not dot(grad, alpha - old_alpha) >= c2*dot(old_grad, alpha-old_alpha)) and (not decreased): #curvature
-            stepsize *= 2.0 #increase stepsize
+        grad = 2 * (aXX - XY)
+
+        if (not dot(grad, alpha - old_alpha) >= c2 * dot(old_grad, alpha - old_alpha)) and (
+            not decreased
+        ):  # curvature
+            stepsize *= 2.0  # increase stepsize
             alpha = old_alpha
             log_alpha = old_log_alpha
             grad = old_grad
@@ -206,54 +218,53 @@ def quadSolveExpGrad(y, x, eps, alpha=None, XX=None):
 
         lam = copy(grad)
         lam -= lam.min()
-        
+
         gap = dot(alpha, lam)
         convergence = gap
-        if (convergence < eps):
+        if convergence < eps:
             break
 
     return alpha, it, new_obj, stepsize, gap
 
 
-
-def KLSolveExpGrad(y,x,eps, alpha=None):
+def KLSolveExpGrad(y, x, eps, alpha=None):
     s_t = time.time()
-    c1 = 10**(-4)
+    c1 = 10 ** (-4)
     c2 = 0.9
-    it = 1 
-    
+    it = 1
+
     start_time = time.time()
     y = clip(y, 0, 1)
     x = clip(x, 0, 1)
 
-    (K,N) = x.shape
+    (K, N) = x.shape
     mask = list(nonzero(y)[0])
 
     y = y[mask]
     x = x[:, mask]
 
-    x += 10**(-9)
-    x /= x.sum(axis=1)[:,newaxis]
+    x += 10 ** (-9)
+    x /= x.sum(axis=1)[:, newaxis]
 
     if alpha is None:
-        alpha = ones(K)/K
+        alpha = ones(K) / K
 
     old_alpha = copy(alpha)
     log_alpha = log(alpha)
     old_log_alpha = copy(log_alpha)
-    proj = dot(alpha,x)
+    proj = dot(alpha, x)
     old_proj = copy(proj)
 
     log_y = log(y)
-    new_obj = KL(y,log_y, proj)
-    y_over_proj = y/proj
+    new_obj = KL(y, log_y, proj)
+    y_over_proj = y / proj
     grad = -dot(x, y_over_proj.transpose())
     old_grad = copy(grad)
 
     stepsize = 1
     decreasing = False
     repeat = False
-    gap = float('inf')
+    gap = float("inf")
 
     while 1:
         eta = stepsize
@@ -264,26 +275,26 @@ def KLSolveExpGrad(y,x,eps, alpha=None):
         old_proj = copy(proj)
 
         it += 1
-        #take a step
-        log_alpha -= eta*grad
+        # take a step
+        log_alpha -= eta * grad
 
-        #normalize
+        # normalize
         log_alpha -= logsum_exp(log_alpha)
 
-        #compute new objective
+        # compute new objective
         alpha = exp(log_alpha)
-        proj = dot(alpha,x)
-        new_obj = KL(y,log_y,proj)
+        proj = dot(alpha, x)
+        new_obj = KL(y, log_y, proj)
         if new_obj < eps:
             break
 
         grad_dot_deltaAlpha = dot(grad, alpha - old_alpha)
-        assert (grad_dot_deltaAlpha <= 10**(-9))
-        if not new_obj <= old_obj + c1*stepsize*grad_dot_deltaAlpha: #sufficient decrease
-            stepsize /= 2.0 #reduce stepsize
-            if stepsize < 10**(-6):
+        assert grad_dot_deltaAlpha <= 10 ** (-9)
+        if not new_obj <= old_obj + c1 * stepsize * grad_dot_deltaAlpha:  # sufficient decrease
+            stepsize /= 2.0  # reduce stepsize
+            if stepsize < 10 ** (-6):
                 break
-            alpha = old_alpha 
+            alpha = old_alpha
             log_alpha = old_log_alpha
             proj = old_proj
             new_obj = old_obj
@@ -291,14 +302,15 @@ def KLSolveExpGrad(y,x,eps, alpha=None):
             decreasing = True
             continue
 
-        
-        #compute the new gradient
+        # compute the new gradient
         old_grad = copy(grad)
-        y_over_proj = y/proj
+        y_over_proj = y / proj
         grad = -dot(x, y_over_proj)
 
-        if not dot(grad, alpha - old_alpha) >= c2*grad_dot_deltaAlpha and not decreasing: #curvature
-            stepsize *= 2.0 #increase stepsize
+        if (
+            not dot(grad, alpha - old_alpha) >= c2 * grad_dot_deltaAlpha and not decreasing
+        ):  # curvature
+            stepsize *= 2.0  # increase stepsize
             alpha = old_alpha
             log_alpha = old_log_alpha
             grad = old_grad
@@ -307,24 +319,24 @@ def KLSolveExpGrad(y,x,eps, alpha=None):
             repeat = True
             continue
 
-        decreasing= False
+        decreasing = False
         lam = copy(grad)
         lam -= lam.min()
-        
+
         gap = dot(alpha, lam)
         convergence = gap
-        if (convergence < eps):
+        if convergence < eps:
             break
 
-    return alpha, it, new_obj, stepsize, time.time()- start_time, gap
+    return alpha, it, new_obj, stepsize, time.time() - start_time, gap
 
 
 def Recover(Q, anchors):
     K = len(anchors)
     orig = Q
-    #print "anchors", anchors
-    #print "RECOVERY:"
-    permutation = list(range(len(Q[:,0])))
+    # print "anchors", anchors
+    # print "RECOVERY:"
+    permutation = list(range(len(Q[:, 0])))
     for a in anchors:
         permutation.remove(a)
     permutation = anchors + permutation
@@ -332,18 +344,19 @@ def Recover(Q, anchors):
     Q_prime = Q_prime[:, permutation]
     DRD = Q_prime[0:K, 0:K]
     DRAT = Q_prime[0:K, :]
-    DR1 = dot(DRAT, ones(DRAT[0,:].size))
+    DR1 = dot(DRAT, ones(DRAT[0, :].size))
     z = linalg.solve(DRD, DR1)
     A = dot(linalg.inv(dot(DRD, diag(z))), DRAT).transpose()
-    reverse_permutation = [0]*(len(permutation))
+    reverse_permutation = [0] * (len(permutation))
     for p in permutation:
         reverse_permutation[p] = permutation.index(p)
     A = A[reverse_permutation, :]
     return A
 
+
 def fastRecover(args):
-    y,x,v,logfilename,anchors,divergence,XXT,initial_stepsize,epsilon = args
-    start_time = time.time() 
+    y, x, v, logfilename, anchors, divergence, XXT, initial_stepsize, epsilon = args
+    start_time = time.time()
 
     K = len(anchors)
     alpha = zeros(K)
@@ -361,29 +374,34 @@ def fastRecover(args):
             elif divergence == "L2":
                 alpha, it, dist, stepsize, gap = quadSolveExpGrad(y, x, epsilon, None, XXT)
             elif divergence == "fastL2":
-                alpha, it, dist, stepsize, gap = fastQuadSolveExpGrad(y, x, epsilon, 100, None, XXT)
+                alpha, it, dist, stepsize, gap = fastQuadSolveExpGrad(
+                    y, x, epsilon, 100, None, XXT
+                )
 
             else:
                 print("invalid divergence!")
                 if "gurobi" in divergence:
                     print("gurobi is only valid in single threaded")
-                assert(0)
+                assert 0
             if isnan(alpha).any():
-                alpha = ones(K)/K
+                alpha = ones(K) / K
 
         except Exception as inst:
-            print(type(inst))     # the exception instance
-            print(inst.args)      # arguments stored in .args
-            alpha =  ones(K)/K
+            print(type(inst))  # the exception instance
+            print(inst.args)  # arguments stored in .args
+            alpha = ones(K) / K
             it = -1
             dist = -1
             stepsize = -1
-            
+
     end_time = time.time()
     return (v, it, dist, alpha, stepsize, end_time - start_time, gap)
 
+
 class myIterator:
-    def __init__(self, Q, anchors, recoveryLog, divergence, v_max, initial_stepsize, epsilon=10**(-7)):
+    def __init__(
+        self, Q, anchors, recoveryLog, divergence, v_max, initial_stepsize, epsilon=10 ** (-7)
+    ):
         self.Q = Q
         self.anchors = anchors
         self.v = -1
@@ -400,9 +418,10 @@ class myIterator:
 
     def __iter__(self):
         return self
+
     def __next__(self):
         self.v += 1
-       # print "generating word", self.v, "of", self.V_max
+        # print "generating word", self.v, "of", self.V_max
         if self.v >= self.V_max:
             raise StopIteration
             return 0
@@ -411,36 +430,51 @@ class myIterator:
         anchors = self.anchors
         divergence = self.divergence
         recoveryLog = self.recoveryLog
-        return (copy(Q[v, :]), copy(self.X), v, recoveryLog, anchors, divergence, self.anchorsTimesAnchors, self.initial_stepsize, self.epsilon)
+        return (
+            copy(Q[v, :]),
+            copy(self.X),
+            v,
+            recoveryLog,
+            anchors,
+            divergence,
+            self.anchorsTimesAnchors,
+            self.initial_stepsize,
+            self.epsilon,
+        )
 
-#takes a writeable file recoveryLog to log performance
-#comment out the recovery log if you don't want it
-def nonNegativeRecover(Q, anchors, outfile_name, divergence, max_threads, initial_stepsize=1, epsilon=10**(-7)):
 
-    topic_likelihoodLog = open(outfile_name+".topic_likelihoods", 'w')
-    word_likelihoodLog = open(outfile_name+".word_likelihoods", 'w')
-    alphaLog = open(outfile_name+".alpha", 'w')
+# takes a writeable file recoveryLog to log performance
+# comment out the recovery log if you don't want it
+def nonNegativeRecover(
+    Q, anchors, outfile_name, divergence, max_threads, initial_stepsize=1, epsilon=10 ** (-7)
+):
+
+    topic_likelihoodLog = open(outfile_name + ".topic_likelihoods", "w")
+    word_likelihoodLog = open(outfile_name + ".word_likelihoods", "w")
+    alphaLog = open(outfile_name + ".alpha", "w")
 
     V = Q.shape[0]
     K = len(anchors)
-    A = matrix(zeros((V,K)))
+    A = matrix(zeros((V, K)))
 
     P_w = matrix(diag(dot(Q, ones(V))))
     for v in range(V):
-        if isnan(P_w[v,v]):
-            P_w[v,v] = 10**(-16)
-    
-    #normalize the rows of Q_prime
+        if isnan(P_w[v, v]):
+            P_w[v, v] = 10 ** (-16)
+
+    # normalize the rows of Q_prime
     for v in range(V):
-        Q[v,:] = Q[v,:]/Q[v,:].sum()
+        Q[v, :] = Q[v, :] / Q[v, :].sum()
 
     s = time.time()
     A = matrix(zeros((V, K)))
     if max_threads > 0:
         pool = multiprocessing.Pool(max_threads)
         print("begin threaded recovery with", max_threads, "processors")
-        args = myIterator(Q, anchors, outfile_name+".recoveryLog", divergence, V, initial_stepsize, epsilon)
-        rows = pool.imap_unordered(fastRecover, args, chunksize = 10)
+        args = myIterator(
+            Q, anchors, outfile_name + ".recoveryLog", divergence, V, initial_stepsize, epsilon
+        )
+        rows = pool.imap_unordered(fastRecover, args, chunksize=10)
         for r in rows:
             v, it, obj, alpha, stepsize, t, gap = r
             A[v, :] = alpha
@@ -449,7 +483,7 @@ def nonNegativeRecover(Q, anchors, outfile_name, divergence, max_threads, initia
                 print(v, alpha, file=alphaLog)
                 alphaLog.flush()
                 sys.stdout.flush()
-    
+
     else:
         X = Q[anchors, :]
         XXT = dot(X, X.transpose())
@@ -459,7 +493,7 @@ def nonNegativeRecover(Q, anchors, outfile_name, divergence, max_threads, initia
             model.setParam("OutputFlag", 0)
             alpha = [model.addVar() for _ in range(K)]
             model.update()
-            #sum of c's is 1
+            # sum of c's is 1
             model.addConstr(quicksum(alpha), GRB.EQUAL, 1)
             for k in range(K):
                 model.addConstr(alpha[k], GRB.GREATER_EQUAL, 0)
@@ -467,18 +501,18 @@ def nonNegativeRecover(Q, anchors, outfile_name, divergence, max_threads, initia
             o_static = QuadExpr()
             for i in range(K):
                 for j in range(K):
-                    o_static.addTerms(scale*XXT[i,j], alpha[i], alpha[j])
+                    o_static.addTerms(scale * XXT[i, j], alpha[i], alpha[j])
 
             for w in range(V):
-                tol = 10**(-16)
+                tol = 10 ** (-16)
                 model.setParam("BarConvTol", tol)
                 o = QuadExpr()
                 o += o_static
                 y = Q[w, :]
                 XY = dot(X, y)
                 YY = float(dot(y, y))
-                o += scale*YY
-                o += dot(-2*scale*XY, alpha)
+                o += scale * YY
+                o += dot(-2 * scale * XY, alpha)
                 model.setObjective(o, GRB.MINIMIZE)
                 model.optimize()
                 print("status", model.status)
@@ -492,42 +526,63 @@ def nonNegativeRecover(Q, anchors, outfile_name, divergence, max_threads, initia
                 print(w, a, file=alphaLog)
                 print("alpha sum is", a.sum())
                 print("solving word", w)
-        
+
         else:
             for w in range(V):
                 y = Q[w, :]
-                v, it, obj, alpha, stepsize, t, gap= fastRecover((y,X,w,outfile_name+".recoveryLog",anchors,divergence,XXT,initial_stepsize, epsilon))
+                v, it, obj, alpha, stepsize, t, gap = fastRecover(
+                    (
+                        y,
+                        X,
+                        w,
+                        outfile_name + ".recoveryLog",
+                        anchors,
+                        divergence,
+                        XXT,
+                        initial_stepsize,
+                        epsilon,
+                    )
+                )
                 A[w, :] = alpha
                 if v % 1 == 0:
-                    print("word", v, it, "iterations. Gap", gap, "obj", obj, "final stepsize was", stepsize, "took", t, "seconds")
+                    print(
+                        "word",
+                        v,
+                        it,
+                        "iterations. Gap",
+                        gap,
+                        "obj",
+                        obj,
+                        "final stepsize was",
+                        stepsize,
+                        "took",
+                        t,
+                        "seconds",
+                    )
                     print(v, alpha, file=alphaLog)
                     alphaLog.flush()
                     sys.stdout.flush()
 
-    #rescale A matrix
-    #Bayes rule says P(w|z) proportional to P(z|w)P(w)
+    # rescale A matrix
+    # Bayes rule says P(w|z) proportional to P(z|w)P(w)
 
     A = P_w * A
 
-    #normalize columns of A. This is the normalization constant P(z)
+    # normalize columns of A. This is the normalization constant P(z)
     colsums = A.sum(0)
 
     for k in range(K):
-        A[:, k] = A[:, k]/A[:,k].sum()
-    
+        A[:, k] = A[:, k] / A[:, k].sum()
+
     A = array(A)
 
     for k in range(K):
-        print(colsums[0,k], file=topic_likelihoodLog)
+        print(colsums[0, k], file=topic_likelihoodLog)
 
     for v in range(V):
-        print(P_w[v,v], file=word_likelihoodLog)
-    
-    #recoveryLog.close()
+        print(P_w[v, v], file=word_likelihoodLog)
+
+    # recoveryLog.close()
     topic_likelihoodLog.close()
     word_likelihoodLog.close()
     return A, colsums
-
-
-
-    
