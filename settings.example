@@ -1,5 +1,5 @@
 # Example settings file
-max_threads=8
+max_threads=3
 
 # file names
 log_prefix=log
@@ -15,7 +15,7 @@ eps=10e-7
 seed=100
 
 #number of top words to display
-top_words=10
+top_words=30
 
 #do not allow anchor words that appear in fewer than N documents
 anchor_thresh=100

@@ -1,11 +1,13 @@
+# import click
 import sys
-import random_projection as rp
-from numpy.random import RandomState
 import numpy as np
+import pandas as pd
 from fastRecover import do_recovery
 from anchors import findAnchors
-import scipy.sparse as sparse
+from scipy import sparse
 import time
+from sklearn.feature_extraction.text import CountVectorizer
+
 from Q_matrix import generate_Q_matrix
 import scipy.io
 
@@ -41,24 +43,31 @@ class Params:
 
 
 # parse input args
-if len(sys.argv) > 6:
+if len(sys.argv) > 5:
     infile = sys.argv[1]
     settings_file = sys.argv[2]
-    vocab_file = sys.argv[3]
-    K = int(sys.argv[4])
-    loss = sys.argv[5]
-    outfile = sys.argv[6]
+    K = int(sys.argv[3])
+    loss = sys.argv[4]
+    outfile = sys.argv[5]
 
 else:
     print(
-        "usage: ./learn_topics.py word_doc_matrix settings_file vocab_file K loss output_filename"
+        "usage: ./learn_topics.py word_doc_matrix settings_file K loss output_filename"
     )
     print("for more info see readme.txt")
     sys.exit()
 
 params = Params(settings_file)
-params.dictionary_file = vocab_file
-M = scipy.io.loadmat(infile)["M"]
+
+corpus = pd.read_csv(infile, header=None, index_col=0, squeeze=True)
+cnt_vecr = CountVectorizer(min_df=0.002, max_df=0.2, # max_features=5000, binary=True,
+                           token_pattern=r'\b[^(\W|\d)]\w\w\w+\b')
+M = cnt_vecr.fit_transform(corpus)
+M = M[np.asarray(M.sum(axis=1)).squeeze() > 5, :]  # no pointless docs in training
+M = M.T.tocsc().astype(float)
+
+print('{} words / {} documents'.format(*M.shape))
+
 print("identifying candidate anchors")
 candidate_anchors = []
 
@@ -70,9 +79,17 @@ for i in range(M.shape[0]):
 print(len(candidate_anchors), "candidates")
 
 # forms Q matrix from document-word matrix
-Q = generate_Q_matrix(M)
 
-vocab = open(vocab_file).read().strip().split()
+# Qorg = generate_Q_matrix(M)
+vocab_sz = M.shape[0]
+doclengths = np.array(M.sum(axis=0))
+H = M.multiply(1 / doclengths)
+Q = H.dot(H.T)
+Q = Q - sparse.diags(Q.diagonal())
+Q = Q.multiply(1 / Q.sum()).toarray()
+
+
+vocab = cnt_vecr.get_feature_names()
 
 # check that Q sum is 1 or close to it
 print("Q sum is", Q.sum())
