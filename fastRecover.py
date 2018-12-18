@@ -5,21 +5,6 @@ from numpy import log, exp, ones, zeros, copy, linalg, nonzero, matrix, dot
 import multiprocessing
 
 
-def do_recovery(Q, anchors, loss, params):
-    if loss == "originalRecover":
-        return (Recover(Q, anchors), None)
-    elif loss == "KL" or "L2" in loss:
-        A, colsums = nonNegativeRecover(
-            Q, anchors, params.log_prefix, loss, params.max_threads, epsilon=params.eps
-        )
-        hp = colsums
-
-        return A, hp
-    else:
-        print("unrecognized loss function", loss, ". Options are KL,L2 or originalRecover")
-
-        return None
-
 
 def logsum_exp(y):
     m = y.max()
@@ -440,13 +425,11 @@ class myIterator:
 
 # takes a writeable file recoveryLog to log performance
 # comment out the recovery log if you don't want it
-def nonNegativeRecover(
-    Q, anchors, outfile_name, divergence, max_threads, initial_stepsize=1, epsilon=10 ** (-7)
-):
-
-    topic_likelihoodLog = open(outfile_name + ".topic_likelihoods", "w")
-    word_likelihoodLog = open(outfile_name + ".word_likelihoods", "w")
-    alphaLog = open(outfile_name + ".alpha", "w")
+def nonNegativeRecover(Q, anchors, divergence, params, initial_stepsize=1):
+    epsilon = params.eps if params.eps is not None else 10 ** (-7)
+    topic_likelihoodLog = open(params.log_prefix + ".topic_likelihoods", "w")
+    word_likelihoodLog = open(params.log_prefix + ".word_likelihoods", "w")
+    alphaLog = open(params.log_prefix + ".alpha", "w")
 
     V = Q.shape[0]
     K = len(anchors)
@@ -463,11 +446,11 @@ def nonNegativeRecover(
 
     s = time.time()
     A = matrix(zeros((V, K)))
-    if max_threads > 0:
-        pool = multiprocessing.Pool(max_threads)
-        print("begin threaded recovery with", max_threads, "processors")
+    if params.max_threads > 0:
+        pool = multiprocessing.Pool(params.max_threads)
+        print("begin threaded recovery with", params.max_threads, "processors")
         args = myIterator(
-            Q, anchors, outfile_name + ".recoveryLog", divergence, V, initial_stepsize, epsilon
+            Q, anchors, params.log_prefix + ".recoveryLog", divergence, V, initial_stepsize, epsilon
         )
         rows = pool.imap_unordered(fastRecover, args, chunksize=10)
         for r in rows:
@@ -489,7 +472,7 @@ def nonNegativeRecover(
                     y,
                     X,
                     w,
-                    outfile_name + ".recoveryLog",
+                    params.log_prefix + ".recoveryLog",
                     anchors,
                     divergence,
                     XXT,

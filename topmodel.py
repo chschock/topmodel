@@ -2,7 +2,7 @@
 import sys
 import numpy as np
 import pandas as pd
-from fastRecover import do_recovery
+from fastRecover import nonNegativeRecover
 from anchors import findAnchors
 from scipy import sparse
 import time
@@ -104,7 +104,7 @@ for i, a in enumerate(anchors):
     print(i, vocab[a])
 
 # recover topics
-A, topic_likelihoods = do_recovery(Q, anchors, loss, params)
+A, topic_likelihoods = nonNegativeRecover(Q, anchors, loss, params)
 print("done recovering")
 
 np.savetxt(outfile + ".A", A)
