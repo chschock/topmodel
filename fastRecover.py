@@ -1,9 +1,8 @@
 import time
 import sys
-from numpy import *
+import numpy as np
+from numpy import log, exp, ones, zeros, copy, linalg, nonzero, matrix, dot
 import multiprocessing
-
-# from gurobipy import *
 
 
 def do_recovery(Q, anchors, loss, params):
@@ -43,19 +42,17 @@ def entropy(p):
 
 
 def KL(p, log_p, q):
-    N = p.size
-    ret = 0
     log_diff = log_p - log(q)
     ret = dot(p, log_diff)
-    if ret < 0 or isnan(ret):
+    if ret < 0 or np.isnan(ret):
         print("invalid KL!")
         print("p:")
-        for i in range(n):
+        for i in range(p.size):
             print(p[i])
             if p[i] <= 0:
                 print("!!")
         print("\nq:")
-        for i in range(n):
+        for i in range(p.size):
             print(q[i])
             if q[i] <= 0:
                 print("!!")
@@ -234,8 +231,8 @@ def KLSolveExpGrad(y, x, eps, alpha=None):
     it = 1
 
     start_time = time.time()
-    y = clip(y, 0, 1)
-    x = clip(x, 0, 1)
+    y = np.clip(y, 0, 1)
+    x = np.clip(x, 0, 1)
 
     (K, N) = x.shape
     mask = list(nonzero(y)[0])
@@ -244,7 +241,7 @@ def KLSolveExpGrad(y, x, eps, alpha=None):
     x = x[:, mask]
 
     x += 10 ** (-9)
-    x /= x.sum(axis=1)[:, newaxis]
+    x /= x.sum(axis=1)[:, np.newaxis]
 
     if alpha is None:
         alpha = ones(K) / K
@@ -346,7 +343,7 @@ def Recover(Q, anchors):
     DRAT = Q_prime[0:K, :]
     DR1 = dot(DRAT, ones(DRAT[0, :].size))
     z = linalg.solve(DRD, DR1)
-    A = dot(linalg.inv(dot(DRD, diag(z))), DRAT).transpose()
+    A = dot(linalg.inv(dot(DRD, np.diag(z))), DRAT).transpose()
     reverse_permutation = [0] * (len(permutation))
     for p in permutation:
         reverse_permutation[p] = permutation.index(p)
@@ -380,10 +377,8 @@ def fastRecover(args):
 
             else:
                 print("invalid divergence!")
-                if "gurobi" in divergence:
-                    print("gurobi is only valid in single threaded")
                 assert 0
-            if isnan(alpha).any():
+            if np.isnan(alpha).any():
                 alpha = ones(K) / K
 
         except Exception as inst:
@@ -457,9 +452,9 @@ def nonNegativeRecover(
     K = len(anchors)
     A = matrix(zeros((V, K)))
 
-    P_w = matrix(diag(dot(Q, ones(V))))
+    P_w = matrix(np.diag(dot(Q, ones(V))))
     for v in range(V):
-        if isnan(P_w[v, v]):
+        if np.isnan(P_w[v, v]):
             P_w[v, v] = 10 ** (-16)
 
     # normalize the rows of Q_prime
@@ -487,81 +482,40 @@ def nonNegativeRecover(
     else:
         X = Q[anchors, :]
         XXT = dot(X, X.transpose())
-        if divergence == "gurobi_L2":
-            scale = 1
-            model = Model("distance")
-            model.setParam("OutputFlag", 0)
-            alpha = [model.addVar() for _ in range(K)]
-            model.update()
-            # sum of c's is 1
-            model.addConstr(quicksum(alpha), GRB.EQUAL, 1)
-            for k in range(K):
-                model.addConstr(alpha[k], GRB.GREATER_EQUAL, 0)
-
-            o_static = QuadExpr()
-            for i in range(K):
-                for j in range(K):
-                    o_static.addTerms(scale * XXT[i, j], alpha[i], alpha[j])
-
-            for w in range(V):
-                tol = 10 ** (-16)
-                model.setParam("BarConvTol", tol)
-                o = QuadExpr()
-                o += o_static
-                y = Q[w, :]
-                XY = dot(X, y)
-                YY = float(dot(y, y))
-                o += scale * YY
-                o += dot(-2 * scale * XY, alpha)
-                model.setObjective(o, GRB.MINIMIZE)
-                model.optimize()
-                print("status", model.status)
-                while not model.status == 2:
-                    tol *= 10
-                    print("status", model.status, "tol", tol)
-                    model.setParam("BarConvTol", tol)
-                    model.optimize()
-                a = array([z.getAttr("x") for z in alpha])
-                A[w, :] = a
-                print(w, a, file=alphaLog)
-                print("alpha sum is", a.sum())
-                print("solving word", w)
-
-        else:
-            for w in range(V):
-                y = Q[w, :]
-                v, it, obj, alpha, stepsize, t, gap = fastRecover(
-                    (
-                        y,
-                        X,
-                        w,
-                        outfile_name + ".recoveryLog",
-                        anchors,
-                        divergence,
-                        XXT,
-                        initial_stepsize,
-                        epsilon,
-                    )
+        for w in range(V):
+            y = Q[w, :]
+            v, it, obj, alpha, stepsize, t, gap = fastRecover(
+                (
+                    y,
+                    X,
+                    w,
+                    outfile_name + ".recoveryLog",
+                    anchors,
+                    divergence,
+                    XXT,
+                    initial_stepsize,
+                    epsilon,
                 )
-                A[w, :] = alpha
-                if v % 1 == 0:
-                    print(
-                        "word",
-                        v,
-                        it,
-                        "iterations. Gap",
-                        gap,
-                        "obj",
-                        obj,
-                        "final stepsize was",
-                        stepsize,
-                        "took",
-                        t,
-                        "seconds",
-                    )
-                    print(v, alpha, file=alphaLog)
-                    alphaLog.flush()
-                    sys.stdout.flush()
+            )
+            A[w, :] = alpha
+            if v % 1 == 0:
+                print(
+                    "word",
+                    v,
+                    it,
+                    "iterations. Gap",
+                    gap,
+                    "obj",
+                    obj,
+                    "final stepsize was",
+                    stepsize,
+                    "took",
+                    t,
+                    "seconds",
+                )
+                print(v, alpha, file=alphaLog)
+                alphaLog.flush()
+                sys.stdout.flush()
 
     # rescale A matrix
     # Bayes rule says P(w|z) proportional to P(z|w)P(w)
@@ -574,7 +528,7 @@ def nonNegativeRecover(
     for k in range(K):
         A[:, k] = A[:, k] / A[:, k].sum()
 
-    A = array(A)
+    A = np.array(A)
 
     for k in range(K):
         print(colsums[0, k], file=topic_likelihoodLog)
