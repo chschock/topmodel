@@ -2,11 +2,14 @@
 import sys
 import numpy as np
 import pandas as pd
+import pickle
 from fastRecover import nonNegativeRecover
 from anchors import findAnchors
 from scipy import sparse
 import time
 from sklearn.feature_extraction.text import CountVectorizer
+from sklearn.preprocessing import normalize
+from nonnegfac.nnls import nnlsm_blockpivot
 
 from Q_matrix import generate_Q_matrix
 import scipy.io
@@ -104,16 +107,25 @@ for i, a in enumerate(anchors):
     print(i, vocab[a])
 
 # recover topics
-A, topic_likelihoods = nonNegativeRecover(Q, anchors, loss, params)
+#A, topic_likelihoods = nonNegativeRecover(Q, anchors, loss, params)
+
+Q_bar = normalize(Q, axis=1, norm='l1')
+Q_anchors = Q[anchors, :]
+
+A_prime, stat = nnlsm_blockpivot(Q_anchors.T, Q.T)
+A_prime = A_prime.T
+#print(stat)
+
+topic_likelihoods = np.linalg.norm(A_prime, axis=0, ord=1)
+A = normalize(A_prime, axis=0, norm='l1')
+
 print("done recovering")
 
 np.savetxt(outfile + ".A", A)
 np.savetxt(outfile + ".topic_likelihoods", topic_likelihoods)
 
-
-# from sklearn.preprocessing import normalize
-# Q_bar = normalize(Q, axis=1)
-# topic_probs =
+B, stat = nnlsm_blockpivot(A, H)
+#print(stat)
 
 # display
 with open(outfile + ".topwords", "w") as f:
@@ -126,3 +138,8 @@ with open(outfile + ".topwords", "w") as f:
             print(vocab[w], end=" ", file=f)
         print("")
         print("", file=f)
+
+with open(outfile + '.pkl', 'wb') as f:
+    pickle.dump((A, B, topic_likelihoods), file=f)
+
+#import ipdb; ipdb.set_trace()
