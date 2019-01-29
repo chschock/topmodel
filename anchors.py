@@ -1,7 +1,3 @@
-import numpy as np
-import sys
-import os
-import errno
 from numpy.random import RandomState
 import random_projection as rp
 import gram_schmidt_stable as gs

@@ -6,7 +6,7 @@ log_prefix=log
 checkpoint_prefix=checkpoint
 
 #low dimension for finding anchor words
-new_dim=1000
+new_dim=2000
 
 #precision for optimization steps
 eps=10e-7
