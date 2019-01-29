@@ -1,18 +1,17 @@
 # import click
 import sys
-import numpy as np
-import pandas as pd
-import pickle
-from fastRecover import nonNegativeRecover
-from anchors import findAnchors
-from scipy import sparse
+import logging
 import time
-from sklearn.feature_extraction.text import CountVectorizer
+import numpy as np
+from scipy import sparse
 from sklearn.preprocessing import normalize
-from nonnegfac.nnls import nnlsm_blockpivot
+from sklearn.decomposition.nmf import non_negative_factorization
+from sklearn.base import BaseEstimator, TransformerMixin
 
-from Q_matrix import generate_Q_matrix
-import scipy.io
+import random_projection as rp
+import gram_schmidt_stable as gs
+
+log = logging.getLogger(__name__)
 
 
 class Params:
@@ -20,126 +19,149 @@ class Params:
         self.log_prefix = None
         self.checkpoint_prefix = None
         self.seed = int(time.time())
-
-        with open(filename, "rt") as f:
-            for l in f:
-                if l == "\n" or l[0] == "#":
-                    continue
-                l = l.strip()
-                l = l.split("=")
-                if l[0] == "log_prefix":
-                    self.log_prefix = l[1]
-                elif l[0] == "max_threads":
-                    self.max_threads = int(l[1])
-                elif l[0] == "eps":
-                    self.eps = float(l[1])
-                elif l[0] == "checkpoint_prefix":
-                    self.checkpoint_prefix = l[1]
-                elif l[0] == "new_dim":
-                    self.new_dim = int(l[1])
-                elif l[0] == "seed":
-                    self.seed = int(l[1])
-                elif l[0] == "anchor_thresh":
-                    self.anchor_thresh = int(l[1])
-                elif l[0] == "top_words":
-                    self.top_words = int(l[1])
+        self.eps = float()
+        self.new_dim = int()
+        self.seed = int()
+        self.anchor_thresh = int()
+        self.top_words = int()
+        self.n_topics = int(sys.argv[3])
+        self.loss = sys.argv[4]
 
 
-# parse input args
-if len(sys.argv) > 5:
-    infile = sys.argv[1]
-    settings_file = sys.argv[2]
-    K = int(sys.argv[3])
-    loss = sys.argv[4]
-    outfile = sys.argv[5]
-
-else:
-    print(
-        "usage: ./learn_topics.py word_doc_matrix settings_file K loss output_filename"
+def show_topics(topic_term_mat, vocab, P_term, lbd=1, n_top_terms=15):
+    """
+    ### present topics by relevant words
+    - from pyldavis, but footnote 2 there is incorrect
+    - https://nlp.stanford.edu/events/illvi2014/papers/sievert-illvi2014.pdf
+    """
+    a = np.asarray(
+        lbd * np.log1p(topic_term_mat) +
+        (1 - lbd) * np.log1p(np.multiply(topic_term_mat, 1 / P_term.reshape(1, -1)))
     )
-    print("for more info see readme.txt")
-    sys.exit()
 
-params = Params(settings_file)
+    def top_words(t):
+        return [vocab[i] for i in np.argsort(t)[:-n_top_terms-1:-1]]
 
-corpus = pd.read_csv(infile, header=None, index_col=0, squeeze=True)
-cnt_vecr = CountVectorizer(min_df=0.002, max_df=0.2, # max_features=5000, binary=True,
-                           token_pattern=r'\b[^(\W|\d)]\w\w\w+\b')
-M = cnt_vecr.fit_transform(corpus)
-M = M[np.asarray(M.sum(axis=1)).squeeze() > 5, :]  # no pointless docs in training
-M = M.T.tocsc().astype(float)
-
-print('{} words / {} documents'.format(*M.shape))
-
-print("identifying candidate anchors")
-candidate_anchors = []
-
-# only accept anchors that appear in a significant number of docs
-for i in range(M.shape[0]):
-    if len(np.nonzero(M[i, :])[1]) > params.anchor_thresh:
-        candidate_anchors.append(i)
-
-print(len(candidate_anchors), "candidates")
-
-# forms Q matrix from document-word matrix
-
-# Qorg = generate_Q_matrix(M)
-vocab_sz = M.shape[0]
-doclengths = np.array(M.sum(axis=0))
-H = M.multiply(1 / doclengths)
-Q = H.dot(H.T)
-Q = Q - sparse.diags(Q.diagonal())
-Q = Q.multiply(1 / Q.sum()).toarray()
+    topic_words = [top_words(t) for t in a]
+    topic_list = [' '.join(t) for t in topic_words]
+    return topic_list
 
 
-vocab = cnt_vecr.get_feature_names()
+def get_Q(M):
+    """
+    https://people.csail.mit.edu/dsontag/papers/AroraEtAl_icml13_supp.pdf Section 4.1
+    M: term x document matrix
+    Returns coocurrence matrix Q
+    """
+    doclengths = np.array(M.sum(axis=0))
+    H = M.multiply(1 / np.sqrt(np.multiply(doclengths, doclengths - 1)))
+    diags = np.array(M.multiply(1 / np.multiply(doclengths, doclengths - 1)).sum(axis=1)).flatten()
+    Q = H.dot(H.T) - sparse.diags(diags)
+    Q = np.asarray((Q / Q.sum()).todense())
+    assert np.isclose(Q[Q < 0], 0).all()
+    Q[Q < 0] = 0
+    return Q
 
-# check that Q sum is 1 or close to it
-print("Q sum is", Q.sum())
-V = Q.shape[0]
-print("done reading documents")
 
-# find anchors- this step uses a random projection
-# into low dimensional space
-anchors = findAnchors(Q, K, params, candidate_anchors)
-print("anchors are:")
-for i, a in enumerate(anchors):
-    print(i, vocab[a])
+def find_anchors(Q, K, candidates, dim, seed):
+    # Random number generator for generating dimension reduction
+    prng_W = np.random.RandomState(seed)
 
-# recover topics
-#A, topic_likelihoods = nonNegativeRecover(Q, anchors, loss, params)
+    # row normalize Q
+    row_sums = Q.sum(1)
+    for i in range(len(Q[:, 0])):
+        Q[i, :] = Q[i, :] / float(row_sums[i])
 
-Q_bar = normalize(Q, axis=1, norm='l1')
-Q_anchors = Q[anchors, :]
+    # Reduced dimension random projection method for recovering anchor words
+    Q_red = rp.Random_Projection(Q.T, dim, prng_W)
+    Q_red = Q_red.T
+    (anchors, anchor_indices) = gs.Projection_Find(Q_red, K, candidates)
 
-A_prime, stat = nnlsm_blockpivot(Q_anchors.T, Q.T)
-A_prime = A_prime.T
-#print(stat)
+    # restore the original Q
+    for i in range(len(Q[:, 0])):
+        Q[i, :] = Q[i, :] * float(row_sums[i])
 
-topic_likelihoods = np.linalg.norm(A_prime, axis=0, ord=1)
-A = normalize(A_prime, axis=0, norm='l1')
+    return anchor_indices
 
-print("done recovering")
 
-np.savetxt(outfile + ".A", A)
-np.savetxt(outfile + ".topic_likelihoods", topic_likelihoods)
+def recover_term_topic_matrix(Q, anchors):
+    """
+    Compute C such that C * Q_anchors = Q_bar minimized with Kullback-Leibler divergence.
+    All rowsums of this matrix product are 1, for Q_* by construction, for C it follows.
+    Params:
+        Q: numpy float array, word coocurrence matrix
+        anchors: list of indices of anchor words
+    Returns:
+        A: term x topic matrix
+        C: intermediate result
+        n_iter: number of iterations till convergence in computation of C
+    """
+    n_topics = len(anchors)
+    P_w = Q.sum(axis=1)
+    Q_bar = normalize(Q, axis=1, norm='l1')
+    Q_anchors = Q_bar[anchors, :]
 
-B, stat = nnlsm_blockpivot(A, H)
-#print(stat)
+    #   Q_anchor
+    # C Q_bar
+    C, _, n_iter = non_negative_factorization(Q_bar, W=None, H=Q_anchors, n_components=n_topics,
+                                              update_H=False, solver='mu', beta_loss=1)
 
-# display
-with open(outfile + ".topwords", "w") as f:
-    for k in range(K):
-        topwords = np.argsort(A[:, k])[-params.top_words :][::-1]
-        print(vocab[anchors[k]], ":", end=" ")
-        print(vocab[anchors[k]], ":", end=" ", file=f)
-        for w in topwords:
-            print(vocab[w], end=" ")
-            print(vocab[w], end=" ", file=f)
-        print("")
-        print("", file=f)
+    A_prime = np.multiply(P_w.reshape(-1, 1), C)
+    A = normalize(A_prime, axis=0, norm='l1')
 
-with open(outfile + '.pkl', 'wb') as f:
-    pickle.dump((A, B, topic_likelihoods), file=f)
+    return A, C, n_iter
 
-#import ipdb; ipdb.set_trace()
+
+class TopModel(BaseEstimator, TransformerMixin):
+
+    def __init__(self, n_topics, anchor_thresh=100, proj_dim=2000, seed=None):
+        """
+        Params:
+            doc_term_mat: scipy.sparse matrix as from CountVectorizer
+            n_topics: number of topics
+            anchor_thresh: number of documents an anchor word has to appear in (stability)
+            seed: random seed for find_anchors
+        """
+        self.n_topics = n_topics
+        self.anchor_thresh = anchor_thresh
+        self.proj_dim = proj_dim
+        self.seed = seed or int(time.time())
+
+    def fit(self, doc_term_mat):
+        """
+        Params:
+            doc_term_mat: scipy.sparse matrix as from CountVectorizer
+        """
+        M = doc_term_mat.T.tocsc().astype(float)
+
+        self.Q = get_Q(M)
+
+        log.info("identifying candidate anchors")
+        candidate_anchors = np.where((M > 0).sum(axis=1) > self.anchor_thresh)[0].tolist()
+
+        self.anchors = find_anchors(
+            self.Q, self.n_topics, candidate_anchors, self.proj_dim, self.seed)
+
+        self.A, self.C, self.n_iter_fit = recover_term_topic_matrix(self.Q, self.anchors)
+
+    def transform(self, doc_term_mat):
+        """
+        Params:
+            doc_term_mat: scipy.sparse matrix as from CountVectorizer
+        Returns:
+            W_T: topic x term matrix
+        """
+        M = doc_term_mat.T
+
+        # product matrix M.T is document term matrix
+        #      A.T
+        # W.T  M.T
+        W_T, _, self.n_iter_transform = non_negative_factorization(
+            M.T, W=None, H=self.A.T, n_components=self.n_topics,
+            update_H=False, solver='mu', beta_loss=1)
+
+        return W_T
+
+    @property
+    def topic_term_matrix(self):
+        return self.A.T.copy()
