@@ -70,13 +70,15 @@ def find_anchors(Q, K, candidates, dim, seed):
     return anchor_indices
 
 
-def recover_term_topic_matrix(Q, anchors, tol=TOL):
+def recover_term_topic_matrix(Q, anchors, tol=TOL, betaloss=1):
     """
     Compute C such that C * Q_anchors = Q_bar minimized with Kullback-Leibler divergence.
     All rowsums of this matrix product are 1, for Q_* by construction, for C it follows.
     Params:
         Q: numpy float array, word coocurrence matrix
         anchors: list of indices of anchor words
+        tol: tolerance for nmf
+        beta_loss: 1 for Kullback-Leibler (more precise), 2 for L2 loss (faster)
     Returns:
         A: term x topic matrix
         C: intermediate result
@@ -90,7 +92,7 @@ def recover_term_topic_matrix(Q, anchors, tol=TOL):
     #   Q_anchor
     # C Q_bar
     C, _, n_iter = non_negative_factorization(Q_bar, W=None, H=Q_anchors, n_components=n_topics,
-                                              update_H=False, solver='mu', beta_loss=1,
+                                              update_H=False, solver='mu', beta_loss=beta_loss,
                                               tol=tol)
 
     A_prime = np.multiply(P_w.reshape(-1, 1), C)
@@ -107,7 +109,7 @@ class TopModel(BaseEstimator, TransformerMixin):
     Remark:
     The authors propose also faster versions using L2 norm as loss. Using `beta_loss=2`
     instead of 1 computes the L2 loss. But `C` is not row normalized then anymore. Is that ok?
-    Or is some normalizatoin of C necessary before computing A?
+    Or is some normalizatoin of C necessary before computing A? I think it is ok without extras.
     """
     def __init__(self, n_topics, anchor_thresh=100, proj_dim=2000, seed=None):
         """
@@ -122,11 +124,12 @@ class TopModel(BaseEstimator, TransformerMixin):
         self.proj_dim = proj_dim
         self.seed = seed or int(time.time())
 
-    def fit(self, doc_term_mat, tol=TOL):
+    def fit(self, doc_term_mat, tol=TOL, beta_loss=1):
         """
         Params:
             doc_term_mat: scipy.sparse matrix as from CountVectorizer
             tol: tolerance for nmf
+            beta_loss: 1 for Kullback-Leibler (more precise), 2 for L2 loss (faster)
         """
         M = doc_term_mat.T.tocsc().astype(float)
 
@@ -140,11 +143,12 @@ class TopModel(BaseEstimator, TransformerMixin):
 
         self.A, self.C, self.n_iter_fit = recover_term_topic_matrix(self.Q, self.anchors, tol=tol)
 
-    def transform(self, doc_term_mat, tol=TOL):
+    def transform(self, doc_term_mat, tol=TOL, beta_loss=1):
         """
         Params:
             doc_term_mat: scipy.sparse matrix as from CountVectorizer
             tol: tolerance for nmf
+            beta_loss: 1 for Kullback-Leibler (more precise), 2 for L2 loss (faster)
         Returns:
             W_T: topic x term matrix
         """
@@ -155,7 +159,7 @@ class TopModel(BaseEstimator, TransformerMixin):
         # W.T  M.T
         W_T, _, self.n_iter_transform = non_negative_factorization(
             M.T, W=None, H=self.A.T, n_components=self.n_topics,
-            update_H=False, solver='mu', beta_loss=1, tol=tol)
+            update_H=False, solver='mu', beta_loss=beta_loss, tol=tol)
 
         return W_T
 
