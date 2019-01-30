@@ -1,5 +1,3 @@
-# import click
-import sys
 import logging
 import time
 import numpy as np
@@ -13,19 +11,7 @@ import gram_schmidt_stable as gs
 
 log = logging.getLogger(__name__)
 
-
-class Params:
-    def __init__(self, filename):
-        self.log_prefix = None
-        self.checkpoint_prefix = None
-        self.seed = int(time.time())
-        self.eps = float()
-        self.new_dim = int()
-        self.seed = int()
-        self.anchor_thresh = int()
-        self.top_words = int()
-        self.n_topics = int(sys.argv[3])
-        self.loss = sys.argv[4]
+TOL = 1e-4
 
 
 def show_topics(topic_term_mat, vocab, P_term, lbd=1, n_top_terms=15):
@@ -84,7 +70,7 @@ def find_anchors(Q, K, candidates, dim, seed):
     return anchor_indices
 
 
-def recover_term_topic_matrix(Q, anchors):
+def recover_term_topic_matrix(Q, anchors, tol=TOL):
     """
     Compute C such that C * Q_anchors = Q_bar minimized with Kullback-Leibler divergence.
     All rowsums of this matrix product are 1, for Q_* by construction, for C it follows.
@@ -104,7 +90,8 @@ def recover_term_topic_matrix(Q, anchors):
     #   Q_anchor
     # C Q_bar
     C, _, n_iter = non_negative_factorization(Q_bar, W=None, H=Q_anchors, n_components=n_topics,
-                                              update_H=False, solver='mu', beta_loss=1)
+                                              update_H=False, solver='mu', beta_loss=1,
+                                              tol=tol)
 
     A_prime = np.multiply(P_w.reshape(-1, 1), C)
     A = normalize(A_prime, axis=0, norm='l1')
@@ -113,7 +100,15 @@ def recover_term_topic_matrix(Q, anchors):
 
 
 class TopModel(BaseEstimator, TransformerMixin):
+    """
+    Nonnegative matrix factorization according to https://arxiv.org/pdf/1212.4777, where the
+    term-topic-factor is explicitly constructed.
 
+    Remark:
+    The authors propose also faster versions using L2 norm as loss. Using `beta_loss=2`
+    instead of 1 computes the L2 loss. But `C` is not row normalized then anymore. Is that ok?
+    Or is some normalizatoin of C necessary before computing A?
+    """
     def __init__(self, n_topics, anchor_thresh=100, proj_dim=2000, seed=None):
         """
         Params:
@@ -127,10 +122,11 @@ class TopModel(BaseEstimator, TransformerMixin):
         self.proj_dim = proj_dim
         self.seed = seed or int(time.time())
 
-    def fit(self, doc_term_mat):
+    def fit(self, doc_term_mat, tol=TOL):
         """
         Params:
             doc_term_mat: scipy.sparse matrix as from CountVectorizer
+            tol: tolerance for nmf
         """
         M = doc_term_mat.T.tocsc().astype(float)
 
@@ -142,12 +138,13 @@ class TopModel(BaseEstimator, TransformerMixin):
         self.anchors = find_anchors(
             self.Q, self.n_topics, candidate_anchors, self.proj_dim, self.seed)
 
-        self.A, self.C, self.n_iter_fit = recover_term_topic_matrix(self.Q, self.anchors)
+        self.A, self.C, self.n_iter_fit = recover_term_topic_matrix(self.Q, self.anchors, tol=tol)
 
-    def transform(self, doc_term_mat):
+    def transform(self, doc_term_mat, tol=TOL):
         """
         Params:
             doc_term_mat: scipy.sparse matrix as from CountVectorizer
+            tol: tolerance for nmf
         Returns:
             W_T: topic x term matrix
         """
@@ -158,7 +155,7 @@ class TopModel(BaseEstimator, TransformerMixin):
         # W.T  M.T
         W_T, _, self.n_iter_transform = non_negative_factorization(
             M.T, W=None, H=self.A.T, n_components=self.n_topics,
-            update_H=False, solver='mu', beta_loss=1)
+            update_H=False, solver='mu', beta_loss=1, tol=tol)
 
         return W_T
 
